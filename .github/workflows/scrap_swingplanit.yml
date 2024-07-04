@@ -2,32 +2,43 @@ name: Scrape SwingPlanIt
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Runs daily at midnight UTC
-  workflow_dispatch:  # Allows manual triggering of the workflow
+    - cron: "0 0 * * *" # Run every 18 hours
+  workflow_dispatch:
 
 jobs:
-  scrape:
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
+  run_script:
+    runs-on: windows-latest
+    
+    permissions: write-all
+    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
-
-    - uses: r-lib/actions/setup-pandoc@v2
-
-    - uses: r-lib/actions/setup-r@v2
-
-    - uses: r-lib/actions/setup-renv@v2
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          
+      - name: Decrypt large secret
+        run: ./decrypt_secret.sh
+        shell: bash
+        env:
+          LARGE_SECRET_PASSPHRASE: ${{ secrets.LARGE_SECRET_PASSPHRASE }}
+      
+      - name: Test
+        run: ls ./
         
-    - name: Install dependencies
-      run: |
-        R -e "install.packages(c('rvest', 'dplyr', 'tibble', 'stringr'))"
-
-    - name: Run R script
-      run: |
-        Rscript -e "'scrap_swing_planit.R'"
+      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-r@v2
+      - uses: r-lib/actions/setup-renv@v2
+      - name: Run script
+        run: Rscript scrap_swing_planit.R
+        
+      - name: Commit files
+        run: |
+          git config --local user.name github-actions
+          git config --local user.email "actions@github.com"
+          git add -all
+          git commit -am "Daily parsing commit on $(date)"
+          git push origin main
+        env:
+          REPO_KEY: ${{secrets.GITHUB_TOKEN}}
+          username: github-actions
