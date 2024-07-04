@@ -1,7 +1,10 @@
-
+# install.packages("rvest")
 library(rvest)
+# install.packages("dplyr")
 library(dplyr)
+# install.packages("tibble")
 library(tibble)
+# install.packages("stringr")
 library(stringr)
 
 extract_text <- function(html_object, css_string) {
