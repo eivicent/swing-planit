@@ -20,7 +20,7 @@ jobs:
         run: Rscript -e "install.packages(c('rvest', 'dplyr', 'tibble', 'stringr'))"
 
       - name: Run script
-        run: Rscript scrap_swing_planit.R
+        run: Rscript scrape_swing_planit.R
         
       - name: Commit files
         run: |
