@@ -1,0 +1,92 @@
+---
+title: "dashboard"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(gt)
+library(gtExtras)
+```
+
+```{r}
+path_string <- "./daily_parse_data/"
+files_path_string <- list.files(path = path_string)
+files_list <- lapply(files_path_string, function(x) 
+  read_csv(paste0(path_string, x), show_col_types = F,
+           col_select = c(-1)))
+
+output_df <- bind_rows(files_list) %>% 
+  rowwise() %>%
+  mutate(month_n = which(str_detect(month, month.name))) %>% ungroup() %>% 
+  mutate(year_n = str_extract(month,pattern = "[0-9]+"),
+         month_nice = make_date(year_n, month_n, starting_date)) %>% 
+  select(-month)
+```
+
+
+```{r}
+latest_date_available <- str_remove(max(files_path),".csv") %>% as.Date()
+```
+
+
+```{r FESTIVALS PER MONTH}
+output_df %>% 
+  group_by(month = floor_date(month_nice, "month")) %>% 
+  summarise(festivals = n_distinct(name)) %>% 
+  ggplot(aes(x = month,
+    # x = paste(year, month, "-"),
+             y = festivals)) +
+  geom_line() +
+  geom_vline(xintercept = latest_date_available, linetype = 2, alpha = .4) +
+  scale_x_date(date_breaks =  "2 month", date_labels = "%b-%y") +
+  theme(panel.grid.minor = element_blank()) + 
+  labs(x = NULL, title = "Festivals per month")
+```
+
+```{r FESTIVALS PER COUNTRY}
+output_df %>% 
+  group_by(year_n, country) %>% 
+  summarise(festivals = n_distinct(name)) %>% 
+  pivot_wider(names_from = year_n, values_from = festivals) %>% 
+  arrange(desc(`2025`)) %>% 
+  gt() %>% 
+  sub_missing()
+```
+
+
+```{r}
+output_df %>% 
+  filter(year_n == "2026") %>% 
+  slice_min(observation_date) %>% 
+  View()
+```
+
+
+
+
+```{r}
+output_df %>% 
+  # filter(name == "Midnight Sun Swing") %>% 
+  filter(month == "June 2025") %>% 
+  ggplot(aes(x = as.Date(observation_date),
+             y = views,
+         color = name)) +
+  geom_line()
+
+
+output_df %>% 
+  filter(observation_date == Sys.Date()-1) %>% 
+  filter(month == "June 2025") %>% 
+  # filter(country == "Spain") %>% 
+  # select(name) 
+  group_by(observation_date, country) %>% 
+  summarise(views = mean(views)) %>% 
+  ggplot(aes(x = fct_reorder(country, views),
+             y = views)) +
+  geom_col() +
+  coord_flip()
+```
+
+
+
