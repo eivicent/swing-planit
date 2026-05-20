@@ -48,3 +48,15 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 .DS_Store
+
+# Auto-managed data lives on the `data` orphan branch. Locally a developer can
+# either run the scraper to materialize today's snapshot, or check out the
+# `data` branch into these paths.
+/daily_parse_data/
+/processed_data/
+
+# Per-run scrape logs (mirrored on the data branch as well)
+/daily_parse_data/_logs/
+
+# CI worktree mount point
+.data_branch/
