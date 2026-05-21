@@ -17,4 +17,7 @@ Imports:
     httr2,
     shiny,
     ggplot2,
-    scales
+    scales,
+    xml2
+Suggests:
+    testthat (>= 3.0.0)

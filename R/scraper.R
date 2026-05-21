@@ -47,33 +47,48 @@ make_logger <- function(log_dir = "./daily_parse_data/_logs", today = Sys.Date()
 
 # ---- HTTP layer (#6, #7) ----------------------------------------------------
 
+#' TRUE iff `url` is a non-NA, non-empty `http(s)://` string.
+#'
+#' Used to short-circuit malformed/missing links before they reach
+#' `httr2::request()` (which aborts on NA input and would take down the whole
+#' scrape on a single bad card).
+is_fetchable_url <- function(url) {
+  !is.na(url) & nzchar(url) & stringr::str_starts(url, "https?://")
+}
+
 #' Build an httr2 request with our UA, retries, and throttle settings.
-build_request <- function(url, throttle_rate = 5) {
+#'
+#' `retry_on_failure = TRUE` is important: by default `httr2::req_retry()`
+#' only retries HTTP-level transient codes, NOT curl-level errors. The 2026-05-21
+#' production failure was exactly such a case (`open.connection: cannot open
+#' the connection`), which would have been absorbed by a single retry. We
+#' opt in to retry curl errors too since the SwingPlanit domain is known-stable.
+build_request <- function(url, throttle_rate = 5, max_tries = 4) {
   httr2::request(url) |>
     httr2::req_user_agent(USER_AGENT) |>
     httr2::req_retry(
-      max_tries = 3,
+      max_tries = max_tries,
       backoff = function(attempt) 2^attempt,
-      is_transient = function(resp) httr2::resp_status(resp) %in% c(408, 429, 500, 502, 503, 504)
+      is_transient = function(resp) httr2::resp_status(resp) %in% c(408, 429, 500, 502, 503, 504),
+      retry_on_failure = TRUE
     ) |>
-    httr2::req_throttle(rate = throttle_rate / 1) |>
+    httr2::req_throttle(rate = throttle_rate) |>
     httr2::req_timeout(30)
 }
 
-#' Fetch a single URL and return parsed HTML, or NULL on failure.
-fetch_html <- function(url, log = NULL) {
-  result <- tryCatch(
-    httr2::req_perform(build_request(url)),
-    error = function(e) e
-  )
-  if (inherits(result, "error")) {
-    if (!is.null(log)) log("WARN", paste("fetch failed:", conditionMessage(result)), url)
+#' Parse an httr2 response object into an `xml_document`, or NULL on failure.
+#' Shared by `fetch_html()` and `fetch_html_many()` so single-URL and parallel
+#' paths fail identically.
+response_to_html <- function(resp, url, log = NULL) {
+  if (inherits(resp, "error") || inherits(resp, "condition")) {
+    if (!is.null(log)) log("WARN", paste("fetch failed:", conditionMessage(resp)), url)
     return(NULL)
   }
-  body <- tryCatch(
-    httr2::resp_body_string(result),
-    error = function(e) NULL
-  )
+  if (httr2::resp_is_error(resp)) {
+    if (!is.null(log)) log("WARN", paste0("HTTP ", httr2::resp_status(resp)), url)
+    return(NULL)
+  }
+  body <- tryCatch(httr2::resp_body_string(resp), error = function(e) NULL)
   if (is.null(body) || !nzchar(body)) {
     if (!is.null(log)) log("WARN", "empty body", url)
     return(NULL)
@@ -87,39 +102,51 @@ fetch_html <- function(url, log = NULL) {
   )
 }
 
+#' Fetch a single URL and return parsed HTML, or NULL on failure.
+fetch_html <- function(url, log = NULL) {
+  if (!is_fetchable_url(url)) {
+    if (!is.null(log)) {
+      log("WARN", "invalid url", if (is.na(url)) NA_character_ else url)
+    }
+    return(NULL)
+  }
+  resp <- tryCatch(
+    httr2::req_perform(build_request(url)),
+    error = function(e) e
+  )
+  response_to_html(resp, url, log = log)
+}
+
 #' Fetch many URLs in parallel with the same retry/throttle settings.
 #'
-#' Returns a list aligned with `urls`; entries are `xml_document` or NULL.
-fetch_html_many <- function(urls, log = NULL, max_active = 4, throttle_rate = 5) {
+#' Returns a list aligned positionally with `urls`. Entries are `xml_document`
+#' or NULL. Invalid URLs (NA, empty, non-http) are skipped without making any
+#' request and produce NULL entries at the corresponding positions.
+fetch_html_many <- function(urls, log = NULL, max_active = 4, throttle_rate = 5, max_tries = 4) {
   if (length(urls) == 0) return(list())
-  reqs <- lapply(urls, build_request, throttle_rate = throttle_rate)
+
+  valid <- is_fetchable_url(urls)
+  result <- vector("list", length(urls))
+
+  if (!is.null(log)) {
+    for (i in which(!valid)) {
+      log("WARN", "invalid url", if (is.na(urls[[i]])) NA_character_ else urls[[i]])
+    }
+  }
+  if (!any(valid)) return(result)
+
+  valid_urls <- urls[valid]
+  reqs <- lapply(valid_urls, build_request, throttle_rate = throttle_rate, max_tries = max_tries)
   responses <- httr2::req_perform_parallel(
     reqs,
     max_active = max_active,
     on_error = "continue"
   )
-  purrr::map2(responses, urls, function(resp, url) {
-    if (inherits(resp, "error")) {
-      if (!is.null(log)) log("WARN", paste("parallel fetch failed:", conditionMessage(resp)), url)
-      return(NULL)
-    }
-    if (httr2::resp_is_error(resp)) {
-      if (!is.null(log)) log("WARN", paste0("HTTP ", httr2::resp_status(resp)), url)
-      return(NULL)
-    }
-    body <- tryCatch(httr2::resp_body_string(resp), error = function(e) NULL)
-    if (is.null(body) || !nzchar(body)) {
-      if (!is.null(log)) log("WARN", "empty body", url)
-      return(NULL)
-    }
-    tryCatch(
-      rvest::read_html(body),
-      error = function(e) {
-        if (!is.null(log)) log("WARN", paste("parse failed:", conditionMessage(e)), url)
-        NULL
-      }
-    )
+  parsed <- purrr::map2(responses, valid_urls, function(resp, url) {
+    response_to_html(resp, url, log = log)
   })
+  result[valid] <- parsed
+  result
 }
 
 # ---- parsing helpers --------------------------------------------------------
@@ -291,6 +318,28 @@ enrich_with_event_pages <- function(cards, log = NULL, parallel = TRUE, max_acti
 
 # ---- main pipeline ----------------------------------------------------------
 
+#' Canonical empty snapshot tibble with the schema downstream consumers expect.
+#'
+#' Used when the homepage has no parseable month sections. Returning a typed
+#' zero-row tibble (instead of `bind_rows(list())`, which yields a 0x0 frame)
+#' keeps `dplyr::mutate(.data$tags, ...)` and downstream metrics code from
+#' crashing on the empty path.
+empty_snapshot <- function() {
+  tibble::tibble(
+    month = character(),
+    starting_date = numeric(),
+    views = numeric(),
+    name = character(),
+    festival_id = character(),
+    country = character(),
+    cities = character(),
+    tags = character(),
+    websites = character(),
+    swingplanit_link = character(),
+    observation_date = as.Date(character())
+  )
+}
+
 #' End-to-end scrape returning the daily snapshot tibble.
 scrape_all <- function(base_url = BASE_URL,
                        parallel = TRUE,
@@ -298,6 +347,12 @@ scrape_all <- function(base_url = BASE_URL,
                        log = make_logger()) {
   log("INFO", paste("scrape start parallel=", parallel, " max_active=", max_active))
   home <- read_homepage(base_url, log = log)
+
+  if (length(home$month_nodes) == 0) {
+    log("ERROR", "homepage parsed but contains zero month sections", base_url)
+    return(empty_snapshot())
+  }
+
   per_month <- purrr::map2(
     home$month_nodes,
     home$month_labels,
@@ -311,7 +366,14 @@ scrape_all <- function(base_url = BASE_URL,
         dplyr::mutate(month = label)
     }
   )
-  out <- dplyr::bind_rows(per_month) |>
+
+  out_bare <- dplyr::bind_rows(per_month)
+  if (nrow(out_bare) == 0) {
+    log("WARN", "no festival rows scraped across any month section")
+    return(empty_snapshot())
+  }
+
+  out <- out_bare |>
     dplyr::mutate(
       tags = .data$tags |> stringr::str_replace_all("\\s+", " ") |> stringr::str_trim(),
       observation_date = Sys.Date(),

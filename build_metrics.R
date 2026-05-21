@@ -33,6 +33,15 @@ festival_id_from_values <- function(link, name) {
     str_replace_all("(^-+|-+$)", "")
 }
 
+#' Like `max(x, na.rm = TRUE)` but returns `NA_real_` for all-NA inputs
+#' instead of emitting `no non-missing arguments to max; returning -Inf` and
+#' producing `-Inf`. Used in per-group summaries where some groups have no
+#' observed `views` yet.
+safe_max <- function(x) {
+  if (all(is.na(x))) return(NA_real_)
+  max(x, na.rm = TRUE)
+}
+
 #' Rolling mean of the last `n` non-NA observations of `values`.
 rolling_mean_last_n <- function(values, n = 7) {
   out <- numeric(length(values))
@@ -121,10 +130,9 @@ timeseries <- raw_data %>%
     city = first(na.omit(cities)),
     month = first(na.omit(month)),
     event_start_date = first(na.omit(event_start_date)),
-    views = max(views, na.rm = TRUE),
+    views = safe_max(views),
     .groups = "drop"
   ) %>%
-  mutate(views = ifelse(is.infinite(views), NA_real_, views)) %>%
   arrange(festival_id, observation_date) %>%
   group_by(festival_id) %>%
   group_modify(function(grp, key) {
