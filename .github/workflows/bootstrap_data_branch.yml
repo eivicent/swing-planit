@@ -1,0 +1,69 @@
+name: Bootstrap data branch
+
+# One-time workflow to create the `data` orphan branch from the current
+# snapshots in `daily_parse_data/` and `processed_data/` on the source ref.
+#
+# Usage (manual, dispatched once):
+#   1. Run on the ref that still contains the historical data (e.g. main).
+#   2. After it succeeds, the `data` branch holds the snapshots and the
+#      daily scrape workflow can push to it from then on.
+#   3. Maintainer can then `git rm -r --cached daily_parse_data processed_data`
+#      on `main` and add them to .gitignore.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Refuse if data branch already exists
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin data; then
+            echo "::error::'data' branch already exists. Refusing to overwrite."
+            exit 1
+          fi
+
+      - name: Stage data into worktree
+        run: |
+          set -euo pipefail
+          mkdir -p _data/daily_parse_data _data/processed_data
+          if [ -d daily_parse_data ]; then
+            cp -a daily_parse_data/. _data/daily_parse_data/
+          fi
+          if [ -d processed_data ]; then
+            cp -a processed_data/. _data/processed_data/
+          fi
+          cat > _data/README.md <<'EOF'
+          # SwingPlanit data branch
+
+          Auto-managed snapshots used by the scrape workflow. Do not edit by hand.
+
+          - `daily_parse_data/` — one CSV per scrape day.
+          - `processed_data/` — derived analytics tables.
+          EOF
+
+      - name: Push as orphan data branch
+        working-directory: _data
+        run: |
+          set -euo pipefail
+          git init -b data
+          git -c user.name=github-actions \
+              -c user.email=actions@github.com \
+              add --all
+          git -c user.name=github-actions \
+              -c user.email=actions@github.com \
+              commit -m "Bootstrap data branch from $GITHUB_SHA"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -u origin data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

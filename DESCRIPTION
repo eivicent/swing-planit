@@ -1,0 +1,23 @@
+Package: swing.planit
+Title: SwingPlanit Scraper, Metrics, and Explorer
+Version: 0.1.0
+Description: Internal project layout. Not a real package; the DESCRIPTION
+    exists so `r-lib/actions/setup-r-dependencies` can resolve and cache the
+    R package dependencies used by the daily scrape, metrics build, and
+    Shiny explorer.
+Encoding: UTF-8
+Imports:
+    rvest,
+    dplyr,
+    tibble,
+    stringr,
+    purrr,
+    readr,
+    tidyr,
+    httr2,
+    shiny,
+    ggplot2,
+    scales,
+    xml2
+Suggests:
+    testthat (>= 3.0.0)
