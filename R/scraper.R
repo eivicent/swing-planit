@@ -22,8 +22,9 @@ BASE_URL <- "https://www.swingplanit.com"
 #' Create a per-run logger that appends to `daily_parse_data/_logs/<date>.log`.
 #'
 #' Returns a function `log(level, msg, url = NA)`. Levels are free-form strings
-#' (e.g. "WARN", "INFO", "ERROR"). The logger is fail-soft: if the log file
-#' cannot be written we fall back to `message()`.
+#' (e.g. "WARN", "INFO", "ERROR"). Every line is also emitted with `message()`
+#' so GitHub Actions captures the reason a fetch failed (file-only logs were
+#' invisible in CI on 2026-07-15 / 2026-07-24). File writes remain fail-soft.
 make_logger <- function(log_dir = "./daily_parse_data/_logs", today = Sys.Date()) {
   dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
   log_path <- file.path(log_dir, paste0(today, ".log"))
@@ -36,11 +37,11 @@ make_logger <- function(log_dir = "./daily_parse_data/_logs", today = Sys.Date()
       msg,
       if (is.na(url) || url == "") "" else paste0(" url=", url)
     )
-    ok <- tryCatch({
-      cat(line, "\n", file = log_path, append = TRUE, sep = "")
-      TRUE
-    }, error = function(e) FALSE)
-    if (!ok) message(line)
+    message(line)
+    tryCatch(
+      cat(line, "\n", file = log_path, append = TRUE, sep = ""),
+      error = function(e) invisible(NULL)
+    )
     invisible(line)
   }
 }
@@ -238,8 +239,33 @@ extract_views <- function(page) {
 # ---- homepage / month parsing -----------------------------------------------
 
 #' Read the homepage and return month nodes + labels.
-read_homepage <- function(url = BASE_URL, log = NULL) {
-  page <- fetch_html(url, log = log)
+#'
+#' Outer retries cover failure modes httr2 does not treat as transient (empty
+#' body, non-5xx/429 status, brief upstream blips). Both 2026-07-15 and
+#' 2026-07-24 CI failures died in ~1s on the homepage fetch — too fast for the
+#' configured httr2 backoff — so a small sleep-and-retry here is intentional.
+read_homepage <- function(url = BASE_URL,
+                          log = NULL,
+                          max_attempts = 3L,
+                          retry_wait_secs = 5) {
+  page <- NULL
+  for (attempt in seq_len(max_attempts)) {
+    page <- fetch_html(url, log = log)
+    if (!is.null(page)) break
+    if (attempt < max_attempts) {
+      if (!is.null(log)) {
+        log(
+          "WARN",
+          paste0(
+            "homepage fetch attempt ", attempt, "/", max_attempts,
+            " failed; retrying in ", retry_wait_secs, "s"
+          ),
+          url
+        )
+      }
+      Sys.sleep(retry_wait_secs)
+    }
+  }
   if (is.null(page)) {
     if (!is.null(log)) log("ERROR", "homepage fetch failed", url)
     stop("Failed to fetch SwingPlanit homepage at ", url)

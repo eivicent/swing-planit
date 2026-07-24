@@ -82,6 +82,36 @@ test_that("scrape_all returns empty snapshot when all months yield zero cards", 
   expect_true("tags" %in% names(snapshot))
 })
 
+test_that("read_homepage retries before giving up on a NULL fetch", {
+  attempts <- 0L
+  local_bind("fetch_html", function(url, log = NULL) {
+    attempts <<- attempts + 1L
+    if (attempts < 3L) {
+      if (!is.null(log)) log("WARN", "simulated fetch miss", url)
+      return(NULL)
+    }
+    xml2::read_html(
+      "<html><body>
+         <div class='swingtag'>July 2026</div>
+         <div class='homepagelist'><div class='color-shape'></div></div>
+       </body></html>"
+    )
+  })
+
+  home <- read_homepage(log = silent_log, max_attempts = 3L, retry_wait_secs = 0)
+  expect_equal(attempts, 3L)
+  expect_equal(length(home$month_nodes), 1L)
+  expect_equal(home$month_labels, "July 2026")
+})
+
+test_that("read_homepage stops after exhausting homepage fetch attempts", {
+  local_bind("fetch_html", function(url, log = NULL) NULL)
+  expect_error(
+    read_homepage(log = silent_log, max_attempts = 2L, retry_wait_secs = 0),
+    "Failed to fetch SwingPlanit homepage"
+  )
+})
+
 test_that("normalize_event_link handles NA, empty, absolute and relative inputs", {
   expect_true(is.na(normalize_event_link(NA_character_)))
   expect_true(is.na(normalize_event_link("")))
