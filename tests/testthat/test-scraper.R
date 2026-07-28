@@ -9,6 +9,21 @@ test_that("build_request opts into retrying curl-level failures", {
   expect_equal(req$options$timeout_ms, 30000)
 })
 
+test_that("build_request treats LiteSpeed 415 as transient and forces HTTP/1.1", {
+  # Regression for 2026-07-28 CI: homepage GET returned HTTP 415 three times
+  # in a row from GHA against LiteSpeed. 415 was not in the retry policy, so
+  # outer homepage retries burned through attempts in ~15s with no backoff.
+  req <- build_request("https://example.com")
+  expect_equal(req$options$http_version, 2L) # CURL_HTTP_VERSION_1_1
+  expect_true(415L %in% TRANSIENT_HTTP_STATUSES)
+
+  fake_415 <- structure(
+    list(status_code = 415L),
+    class = "httr2_response"
+  )
+  expect_true(req$policies$retry_is_transient(fake_415))
+})
+
 test_that("is_fetchable_url accepts http(s) URLs and rejects NA/empty/non-http", {
   expect_true(is_fetchable_url("https://example.com"))
   expect_true(is_fetchable_url("http://example.com/event/foo"))

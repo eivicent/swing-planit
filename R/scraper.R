@@ -14,8 +14,18 @@ suppressPackageStartupMessages({
   library(httr2)
 })
 
-USER_AGENT <- "swing-planit-scraper/0.1 (+https://github.com/eivicent/swing-planit)"
+# Browser-like UA: SwingPlanit (LiteSpeed) sends `Vary: User-Agent` and has
+# intermittently returned HTTP 415 to non-browser clients from GitHub Actions
+# (2026-07-28). A realistic Chrome UA avoids that class of bot fingerprint.
+USER_AGENT <- paste0(
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ",
+  "Chrome/128.0.0.0 Safari/537.36"
+)
 BASE_URL <- "https://www.swingplanit.com"
+
+# Statuses worth retrying. 415 is included because LiteSpeed has been observed
+# returning it on otherwise-valid GETs (same site works moments later).
+TRANSIENT_HTTP_STATUSES <- c(408, 415, 429, 500, 502, 503, 504)
 
 # ---- logging (#8) -----------------------------------------------------------
 
@@ -64,13 +74,24 @@ is_fetchable_url <- function(url) {
 #' production failure was exactly such a case (`open.connection: cannot open
 #' the connection`), which would have been absorbed by a single retry. We
 #' opt in to retry curl errors too since the SwingPlanit domain is known-stable.
+#'
+#' HTTP/1.1 is forced (`http_version = 2L` = CURL_HTTP_VERSION_1_1) because
+#' LiteSpeed has been reported to return opaque 415s on some HTTP/2 clients
+#' while the same GET over HTTP/1.1 succeeds.
 build_request <- function(url, throttle_rate = 5, max_tries = 4) {
   httr2::request(url) |>
     httr2::req_user_agent(USER_AGENT) |>
+    httr2::req_headers(
+      Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      `Accept-Language` = "en-US,en;q=0.9"
+    ) |>
+    httr2::req_options(http_version = 2L) |>
     httr2::req_retry(
       max_tries = max_tries,
       backoff = function(attempt) 2^attempt,
-      is_transient = function(resp) httr2::resp_status(resp) %in% c(408, 429, 500, 502, 503, 504),
+      is_transient = function(resp) {
+        httr2::resp_status(resp) %in% TRANSIENT_HTTP_STATUSES
+      },
       retry_on_failure = TRUE
     ) |>
     httr2::req_throttle(rate = throttle_rate) |>
