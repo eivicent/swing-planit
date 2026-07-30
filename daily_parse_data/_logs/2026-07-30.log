@@ -1,0 +1,3 @@
+2026-07-30T02:37:25+0000 [INFO] scrape start parallel= TRUE  max_active= 4
+2026-07-30T02:37:54+0000 [INFO] scrape end rows= 246  missing_views= 0
+2026-07-30T02:37:54+0000 [INFO] snapshot written rows= 246  path= ./daily_parse_data/2026-07-30.csv
