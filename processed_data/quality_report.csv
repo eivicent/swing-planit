@@ -1,7 +1,7 @@
 metric,value
-rows_timeseries,186758
+rows_timeseries,187011
 festivals,1520
 negative_daily_delta_count,0
 missing_views_count,1
 edition_reset_count,4
-latest_observation_date,2026-08-27
+latest_observation_date,2026-08-28
